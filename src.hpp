@@ -60,22 +60,52 @@ private:
 
   // 读取指定磁盘的指定块
   void read_from_disk(int disk_id, int physical_block, char* buffer) {
+    if (disk_id < 0 || disk_id >= num_disks_) {
+      throw std::runtime_error("Invalid disk ID");
+    }
     if (drive_failed_[disk_id]) {
       throw std::runtime_error("Attempting to read from failed disk");
     }
+    if (physical_block < 0 || physical_block >= blocks_per_drive_) {
+      throw std::runtime_error("Invalid physical block");
+    }
+    if (!drives_[disk_id] || !drives_[disk_id]->is_open()) {
+      throw std::runtime_error("Disk file not open");
+    }
     
     drives_[disk_id]->seekg(physical_block * block_size_);
+    if (drives_[disk_id]->fail()) {
+      throw std::runtime_error("Failed to seek in disk file");
+    }
     drives_[disk_id]->read(buffer, block_size_);
+    if (drives_[disk_id]->fail()) {
+      throw std::runtime_error("Failed to read from disk file");
+    }
   }
 
   // 写入指定磁盘的指定块
   void write_to_disk(int disk_id, int physical_block, const char* buffer) {
+    if (disk_id < 0 || disk_id >= num_disks_) {
+      throw std::runtime_error("Invalid disk ID");
+    }
     if (drive_failed_[disk_id]) {
       throw std::runtime_error("Attempting to write to failed disk");
     }
+    if (physical_block < 0 || physical_block >= blocks_per_drive_) {
+      throw std::runtime_error("Invalid physical block");
+    }
+    if (!drives_[disk_id] || !drives_[disk_id]->is_open()) {
+      throw std::runtime_error("Disk file not open");
+    }
     
     drives_[disk_id]->seekp(physical_block * block_size_);
+    if (drives_[disk_id]->fail()) {
+      throw std::runtime_error("Failed to seek in disk file");
+    }
     drives_[disk_id]->write(buffer, block_size_);
+    if (drives_[disk_id]->fail()) {
+      throw std::runtime_error("Failed to write to disk file");
+    }
   }
 
   // 重建指定磁盘的数据
@@ -197,10 +227,17 @@ public:
     if (block_id < 0 || block_id >= Capacity()) {
       throw std::runtime_error("Invalid block ID");
     }
+    if (!result) {
+      throw std::runtime_error("Invalid result buffer");
+    }
 
     int stripe_id = get_stripe_id(block_id);
     int data_disk = get_data_disk(block_id);
     int physical_block = get_physical_block(block_id);
+
+    if (data_disk < 0 || data_disk >= num_disks_) {
+      throw std::runtime_error("Invalid data disk calculated");
+    }
 
     if (!drive_failed_[data_disk]) {
       // 正常读取
@@ -244,11 +281,18 @@ public:
     if (block_id < 0 || block_id >= Capacity()) {
       throw std::runtime_error("Invalid block ID");
     }
+    if (!data) {
+      throw std::runtime_error("Invalid data buffer");
+    }
 
     int stripe_id = get_stripe_id(block_id);
     int data_disk = get_data_disk(block_id);
     int physical_block = get_physical_block(block_id);
     int parity_disk = get_parity_disk(stripe_id);
+
+    if (data_disk < 0 || data_disk >= num_disks_ || parity_disk < 0 || parity_disk >= num_disks_) {
+      throw std::runtime_error("Invalid disk calculated");
+    }
 
     if (!drive_failed_[data_disk] && !drive_failed_[parity_disk]) {
       // 正常写入：读取旧数据，计算新校验，写入数据和校验
