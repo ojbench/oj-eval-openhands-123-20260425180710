@@ -118,68 +118,63 @@ private:
     std::vector<char> xor_buffer(block_size_);
     
     for (int stripe = 0; stripe < blocks_per_drive_; stripe++) {
-      try {
-        // 确定这个条带中，指定磁盘应该存储什么（数据还是校验）
-        int parity_disk = get_parity_disk(stripe);
+      // 确定这个条带中，指定磁盘应该存储什么（数据还是校验）
+      int parity_disk = get_parity_disk(stripe);
+      
+      if (drive_id == parity_disk) {
+        // 这个磁盘存储校验块，需要重新计算校验
+        memset(xor_buffer.data(), 0, block_size_);
         
-        if (drive_id == parity_disk) {
-          // 这个磁盘存储校验块，需要重新计算校验
+        for (int disk = 0; disk < num_disks_; disk++) {
+          if (disk != drive_id && !drive_failed_[disk]) {
+            read_from_disk(disk, stripe, temp_buffer.data());
+            xor_blocks(xor_buffer.data(), xor_buffer.data(), temp_buffer.data(), block_size_);
+          }
+        }
+        
+        write_to_disk(drive_id, stripe, xor_buffer.data());
+      } else {
+        // 这个磁盘存储数据块，需要重建数据
+        // 计算这个条带中，指定磁盘存储的是第几个数据块
+        int data_pos_in_stripe = -1;
+        for (int pos = 0; pos < num_disks_ - 1; pos++) {
+          int disk_for_pos = pos;
+          if (disk_for_pos >= parity_disk) {
+            disk_for_pos++;
+          }
+          if (disk_for_pos == drive_id) {
+            data_pos_in_stripe = pos;
+            break;
+          }
+        }
+        
+        if (data_pos_in_stripe >= 0) {
+          // 重建数据：data = parity ^ all_other_data
           memset(xor_buffer.data(), 0, block_size_);
+          bool found_parity = false;
           
+          // 先找到校验块
           for (int disk = 0; disk < num_disks_; disk++) {
-            if (disk != drive_id && !drive_failed_[disk]) {
+            if (disk != drive_id && !drive_failed_[disk] && disk == parity_disk) {
+              read_from_disk(disk, stripe, temp_buffer.data());
+              memcpy(xor_buffer.data(), temp_buffer.data(), block_size_);
+              found_parity = true;
+              break;
+            }
+          }
+          
+          // 然后XOR所有其他数据块
+          for (int disk = 0; disk < num_disks_; disk++) {
+            if (disk != drive_id && !drive_failed_[disk] && disk != parity_disk) {
               read_from_disk(disk, stripe, temp_buffer.data());
               xor_blocks(xor_buffer.data(), xor_buffer.data(), temp_buffer.data(), block_size_);
             }
           }
           
-          write_to_disk(drive_id, stripe, xor_buffer.data());
-        } else {
-          // 这个磁盘存储数据块，需要重建数据
-          // 计算这个条带中，指定磁盘存储的是第几个数据块
-          int data_pos_in_stripe = -1;
-          for (int pos = 0; pos < num_disks_ - 1; pos++) {
-            int disk_for_pos = pos;
-            if (disk_for_pos >= parity_disk) {
-              disk_for_pos++;
-            }
-            if (disk_for_pos == drive_id) {
-              data_pos_in_stripe = pos;
-              break;
-            }
-          }
-          
-          if (data_pos_in_stripe >= 0) {
-            // 重建数据：data = parity ^ all_other_data
-            memset(xor_buffer.data(), 0, block_size_);
-            bool found_parity = false;
-            
-            // 先找到校验块
-            for (int disk = 0; disk < num_disks_; disk++) {
-              if (disk != drive_id && !drive_failed_[disk] && disk == parity_disk) {
-                read_from_disk(disk, stripe, temp_buffer.data());
-                memcpy(xor_buffer.data(), temp_buffer.data(), block_size_);
-                found_parity = true;
-                break;
-              }
-            }
-            
-            // 然后XOR所有其他数据块
-            for (int disk = 0; disk < num_disks_; disk++) {
-              if (disk != drive_id && !drive_failed_[disk] && disk != parity_disk) {
-                read_from_disk(disk, stripe, temp_buffer.data());
-                xor_blocks(xor_buffer.data(), xor_buffer.data(), temp_buffer.data(), block_size_);
-              }
-            }
-            
-            if (found_parity) {
-              write_to_disk(drive_id, stripe, xor_buffer.data());
-            }
+          if (found_parity) {
+            write_to_disk(drive_id, stripe, xor_buffer.data());
           }
         }
-      } catch (const std::exception& e) {
-        // 如果重建某个条带失败，继续下一个条带
-        continue;
       }
     }
   }
